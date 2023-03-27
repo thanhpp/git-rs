@@ -5,9 +5,6 @@ use std::fs;
 use std::io::Read;
 
 fn main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
-
     // Uncomment this block to pass the first stage
     let args: Vec<String> = env::args().collect();
     match args[1].as_str() {
@@ -53,7 +50,7 @@ fn cat_file(args: &Vec<String>) {
             let mut z = flate2::read::ZlibDecoder::new(&file_content[..]);
             let mut s = String::new();
             z.read_to_string(&mut s).unwrap();
-            println!("{}", s);
+            print!("{}", s[8..].to_string()); // remove blob 40\x00
             return;
         }
     }
