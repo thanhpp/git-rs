@@ -40,6 +40,7 @@ fn cat_file(args: &Vec<String>) {
 
     for entry in fs::read_dir(".git/objects").unwrap() {
         let path = entry.unwrap().path();
+
         let basename = path.file_name().unwrap();
 
         if !basename.eq(hash_prefix) {
