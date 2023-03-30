@@ -2,6 +2,10 @@
 use std::env;
 #[allow(unused_imports)]
 use std::fs;
+use std::fs::create_dir;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::BufWriter;
 use std::io::Read;
 
 use sha1::Digest;
@@ -76,14 +80,37 @@ fn hash_object(args: &Vec<String>) {
 
     // read_file
     let file_content = fs::read(file_path).unwrap();
-    let mut s = sha1::Sha1::new();                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
-    s.update(&file_content);
+    let mut content = Vec::new(); // the hash "blob <0><file_content>"
+    content.extend("blob ".as_bytes());
+    content.extend(file_content.len().to_string().as_bytes());
+    content.push(0);
+    content.extend(file_content);
+    let mut s = sha1::Sha1::new();
+    s.update(&content);
     let hash = s.finalize();
-    print!(
-        "{}",
-        hash.iter()
-            .map(|b| format!("{:02x?}", b))
-            .collect::<Vec<_>>()
-            .join("")
+    let hash = hash
+        .iter()
+        .map(|b| format!("{:02x?}", b)) // convert to hex
+        .collect::<Vec<_>>()
+        .join("");
+    print!("{}", hash);
+
+    // write_file
+    let sub_dir_name: String = hash.chars().take(2).collect(); // first 2 characters hash
+    let file_name: String = hash.chars().skip(2).collect(); // the remaining of the hash
+    let mut blob_path = std::path::Path::new(".git")
+        .join("objects")
+        .join(sub_dir_name);
+    if !blob_path.exists() {
+        create_dir(&blob_path).unwrap(); // create directory
+    }
+    blob_path = blob_path.join(file_name);
+    let encoded_file = File::create(blob_path).unwrap();
+    let mut zlib_reader = flate2::bufread::ZlibEncoder::new(
+        BufReader::new(&content[..]),
+        flate2::Compression::fast(),
     );
+
+    std::io::copy(&mut zlib_reader, &mut BufWriter::new(encoded_file)).unwrap();
+    // write file from a buffer to another buffer
 }
