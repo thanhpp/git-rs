@@ -4,6 +4,8 @@ use std::env;
 use std::fs;
 use std::io::Read;
 
+use sha1::Digest;
+
 fn main() {
     // Uncomment this block to pass the first stage
     let args: Vec<String> = env::args().collect();
@@ -16,6 +18,7 @@ fn main() {
             println!("Initialized git directory");
         }
         "cat-file" => cat_file(&args),
+        "hash-object" => hash_object(&args),
         _ => {
             println!("unknown command: {}", args[1])
         }
@@ -54,4 +57,33 @@ fn cat_file(args: &Vec<String>) {
             return;
         }
     }
+}
+
+fn hash_object(args: &Vec<String>) {
+    match args.get(2) {
+        None => return,
+        Some(x) => {
+            if x.ne("-w") {
+                return;
+            }
+        }
+    }
+
+    let file_path = match args.get(3) {
+        None => return,
+        Some(p) => p,
+    };
+
+    // read_file
+    let file_content = fs::read(file_path).unwrap();
+    let mut s = sha1::Sha1::new();                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+    s.update(&file_content);
+    let hash = s.finalize();
+    print!(
+        "{}",
+        hash.iter()
+            .map(|b| format!("{:02x?}", b))
+            .collect::<Vec<_>>()
+            .join("")
+    );
 }
