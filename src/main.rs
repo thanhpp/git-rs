@@ -23,6 +23,7 @@ fn main() {
         }
         "cat-file" => cat_file(&args),
         "hash-object" => hash_object(&args),
+        "ls-tree" => ls_tree(&args),
         _ => {
             println!("unknown command: {}", args[1])
         }
@@ -111,6 +112,97 @@ fn hash_object(args: &Vec<String>) {
         flate2::Compression::fast(),
     );
 
-    std::io::copy(&mut zlib_reader, &mut BufWriter::new(encoded_file)).unwrap();
     // write file from a buffer to another buffer
+    std::io::copy(&mut zlib_reader, &mut BufWriter::new(encoded_file)).unwrap();
+}
+
+fn ls_tree(args: &Vec<String>) {
+    match args.get(1) {
+        None => return,
+        Some(x) => {
+            if x.ne("ls-tree") {
+                return;
+            }
+        }
+    }
+
+    match args.get(2) {
+        None => return,
+        Some(x) => {
+            if x.ne("--name-only") {
+                return;
+            }
+        }
+    }
+
+    let tree_sha;
+    match args.get(3) {
+        None => return,
+        Some(x) => {
+            tree_sha = x;
+        }
+    }
+
+    let tree_sha_prefix: String = tree_sha.chars().take(2).collect();
+    let tree_sha_postfix: String = tree_sha.chars().skip(2).collect();
+
+    for entry in fs::read_dir(".git/objects").unwrap() {
+        let path = entry.unwrap().path();
+
+        if path.file_name().unwrap().ne(tree_sha_prefix.as_str()) {
+            continue;
+        }
+
+        for sub_entry in fs::read_dir(path).unwrap() {
+            let sub_entry = (sub_entry).unwrap();
+            let file_name = (&sub_entry).file_name();
+
+            if !file_name
+                .into_string()
+                .unwrap()
+                .starts_with(tree_sha_postfix.as_str())
+            {
+                continue;
+            }
+
+            // println!("reading {:?}", (&sub_entry).path());
+
+            let file_content = fs::read((&sub_entry).path()).unwrap();
+            let mut z = flate2::read::ZlibDecoder::new(&file_content[..]);
+            let mut s = Vec::new();
+            z.read_to_end(&mut s).unwrap();
+
+            // <\0><mode>< ><name><\0><hash(len = 20)>
+
+            let data = s.as_slice();
+            let mut entries = Vec::new();
+            let mut pos = s.iter().position(|&x| x == b'\0').unwrap() + 1; // after \0
+
+            while pos < data.len() {
+                let mode_end = data[pos..].iter().position(|&x| x == b' ').unwrap();
+                // let mode_str = String::from_utf8(data[pos..pos + mode_end].to_vec()).unwrap();
+                // let mode = u32::from_str_radix(&mode_str, 8).unwrap();
+
+                let name_end = data[pos + mode_end + 1..]
+                    .iter()
+                    .position(|&x| x == b'\0')
+                    .unwrap();
+                let name = String::from_utf8(
+                    data[pos + mode_end + 1..pos + mode_end + 1 + name_end].to_vec(),
+                );
+
+                let hash_start = pos + mode_end + 1 + name_end + 1;
+                let hash_end = hash_start + 20;
+                // let hash = hex::encode(&data[hash_start..hash_end]);
+
+                entries.push(name.unwrap());
+
+                pos = hash_end;
+            }
+
+            for e in entries.iter() {
+                println!("{}", e);
+            }
+        }
+    }
 }
