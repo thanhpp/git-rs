@@ -1,14 +1,20 @@
-#[allow(unused_imports)]
 use std::env;
-#[allow(unused_imports)]
 use std::fs;
 use std::fs::create_dir;
+use std::fs::read_dir;
+use std::fs::DirEntry;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Read;
+use std::os::unix::prelude::OsStrExt;
+use std::os::unix::prelude::PermissionsExt;
+use std::path::Path;
 
+use flate2::bufread::ZlibEncoder;
+use flate2::Compression;
 use sha1::Digest;
+use sha1::Sha1;
 
 fn main() {
     // Uncomment this block to pass the first stage
@@ -24,6 +30,10 @@ fn main() {
         "cat-file" => cat_file(&args),
         "hash-object" => hash_object(&args),
         "ls-tree" => ls_tree(&args),
+        "write-tree" => {
+            let hash = write_tree(".");
+            println!("{hash}");
+        }
         _ => {
             println!("unknown command: {}", args[1])
         }
@@ -205,4 +215,113 @@ fn ls_tree(args: &Vec<String>) {
             }
         }
     }
+}
+
+fn write_tree<P: AsRef<Path>>(path: P) -> String {
+    // FILE MODE: They are a 16-bit number, with the high 4 bits specifying Git's type of the file and the low 9 bits map to Unix file permissions
+    const DIRECTORY_FLAG: u16 = 1 << 14; // 0100 0000 0000 0000
+    const FILE_FLAG: u16 = 1 << 15; // 1000 0000 0000 0000
+
+    // list all files, sort by file name
+    let mut files: Vec<DirEntry> = read_dir(path).unwrap().map(|f| f.unwrap()).collect();
+    files.sort_by_key(|f| f.file_name());
+
+    let mut tree_content: Vec<u8> = Vec::new();
+
+    for f in files.iter() {
+        // skip .git directory & target directory
+        if f.file_name().eq(".git") || f.file_name().eq("target") {
+            continue;
+        }
+
+        let f_type = f.file_type().unwrap();
+
+        let (hash, mode) = if f_type.is_dir() {
+            let hash = write_tree(f.path());
+            (hash, DIRECTORY_FLAG)
+        } else if f_type.is_file() {
+            // read file
+            let source_f = File::open(f.path()).unwrap();
+            let mut reader = BufReader::new(source_f);
+            let mut f_content_buffer = Vec::new();
+            reader.read_to_end(&mut f_content_buffer).unwrap();
+
+            // write git content of a file
+            let mut store_buffer = Vec::new();
+
+            // write header "blob" + " " + file_length_as_bytes + 0
+            store_buffer.extend("blob ".to_string().as_bytes());
+            store_buffer.extend(f_content_buffer.len().to_string().as_bytes());
+            store_buffer.push(0);
+
+            // write file content
+            store_buffer.append(&mut f_content_buffer);
+
+            // calculate sha1 hash
+            let mut hasher = Sha1::new();
+            hasher.update(&store_buffer);
+            let hex_hash = hex::encode(hasher.finalize());
+
+            // write to git file
+            let dir: String = hex_hash.chars().take(2).collect();
+            let git_file_name: String = hex_hash.chars().skip(2).collect();
+            let output_path = Path::new(".git").join("objects").join(dir);
+            if !output_path.exists() {
+                create_dir(output_path.clone()).unwrap();
+            }
+            let output_path = output_path.join(git_file_name);
+            let git_file = File::create(output_path).unwrap();
+            let mut zlib_reader =
+                ZlibEncoder::new(BufReader::new(&store_buffer[..]), Compression::fast());
+
+            std::io::copy(&mut zlib_reader, &mut BufWriter::new(git_file)).unwrap();
+
+            // file mode
+            #[cfg(unix)]
+            let file_mode = f.metadata().unwrap().permissions().mode();
+            #[cfg(not(unix))]
+            let file_mode = 0o644;
+
+            (hex_hash, FILE_FLAG | ((file_mode & 0o777) as u16))
+        } else {
+            continue;
+        };
+
+        // println!("{:06o} | {:?}", mode, f.file_name());
+        tree_content.extend_from_slice(format!("{:06o} ", mode).as_bytes());
+        tree_content.extend_from_slice(f.file_name().as_bytes());
+        tree_content.push(0);
+        tree_content.append(&mut hex::decode(hash).unwrap());
+    }
+
+    // hash tree
+    let mut tree_buffer = Vec::new();
+
+    // write header "tree" + " " + file_length_as_bytes + 0
+    tree_buffer.extend("tree ".to_string().as_bytes());
+    tree_buffer.extend(tree_content.len().to_string().as_bytes());
+    tree_buffer.push(0);
+
+    // write file content
+    tree_buffer.append(&mut tree_content);
+
+    // calculate sha1 hash
+    let mut hasher = Sha1::new();
+    hasher.update(&tree_buffer);
+    let hex_hash = hex::encode(hasher.finalize());
+
+    // write to git file
+    let dir: String = hex_hash.chars().take(2).collect();
+    let git_file_name: String = hex_hash.chars().skip(2).collect();
+    let output_path = Path::new(".git").join("objects").join(dir);
+    if !output_path.exists() {
+        create_dir(output_path.clone()).unwrap();
+    }
+    let output_path = output_path.join(git_file_name);
+    let git_file = File::create(output_path).unwrap();
+    let mut zlib_reader = ZlibEncoder::new(BufReader::new(&tree_buffer[..]), Compression::fast());
+
+    std::io::copy(&mut zlib_reader, &mut BufWriter::new(git_file)).unwrap();
+
+    return hex_hash;
 }
