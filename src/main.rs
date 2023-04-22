@@ -216,7 +216,9 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
                 git_operation::gen_objects("blob".into(), &file_content).unwrap();
 
             // write git content of a file
-            git_operation::write_obj(hash.clone(), &obj_content).unwrap();
+            git_operation::write_obj(hash.clone(), &obj_content)
+                .map_err(|e| format!("write object error {} {}", hash, e))
+                .unwrap();
 
             // file mode
             #[cfg(unix)]
