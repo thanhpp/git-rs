@@ -8,6 +8,11 @@ use anyhow::{Ok, Result};
 use flate2::Compression;
 use sha1::{Digest, Sha1};
 
+/*
+- takes 2 first characters of a hash -> directory name
+- keep the rest of the hash (38 chars) -> file name
+- the object content is encoded using Zlib with Compression::fast
+*/
 pub fn write_obj(hash: String, obj_content: &Vec<u8>) -> Result<()> {
     // encode object
     let mut zlib_reader =
@@ -30,6 +35,20 @@ pub fn write_obj(hash: String, obj_content: &Vec<u8>) -> Result<()> {
 
     Ok(())
 }
+
+/*
+An git object is written in bytes
+
+Header
+- object type  (blob/tree)
+- a space " "
+- object content length
+- number 0
+Body
+- object content
+Hash
+- sha1 hash
+*/
 
 pub fn gen_objects(obj_type: String, content: &Vec<u8>) -> Result<(String, Vec<u8>)> {
     let mut buffer = Vec::new();
