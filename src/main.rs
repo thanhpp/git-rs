@@ -1,20 +1,13 @@
 use std::env;
 use std::fs;
-use std::fs::create_dir;
 use std::fs::read_dir;
 use std::fs::DirEntry;
-use std::fs::File;
-use std::io::BufReader;
-use std::io::BufWriter;
 use std::io::Read;
 use std::os::unix::prelude::OsStrExt;
 use std::os::unix::prelude::PermissionsExt;
 use std::path::Path;
 
-use flate2::bufread::ZlibEncoder;
-use flate2::Compression;
-use sha1::Digest;
-use sha1::Sha1;
+mod git_operation;
 
 fn main() {
     // Uncomment this block to pass the first stage
@@ -91,39 +84,14 @@ fn hash_object(args: &Vec<String>) {
 
     // read_file
     let file_content = fs::read(file_path).unwrap();
-    let mut content = Vec::new(); // the hash "blob <0><file_content>"
-    content.extend("blob ".as_bytes());
-    content.extend(file_content.len().to_string().as_bytes());
-    content.push(0);
-    content.extend(file_content);
-    let mut s = sha1::Sha1::new();
-    s.update(&content);
-    let hash = s.finalize();
-    let hash = hash
-        .iter()
-        .map(|b| format!("{:02x?}", b)) // convert to hex
-        .collect::<Vec<_>>()
-        .join("");
-    print!("{}", hash);
+
+    // create file content
+    let (hash, obj_content) = git_operation::gen_objects("blob".into(), &file_content).unwrap();
 
     // write_file
-    let sub_dir_name: String = hash.chars().take(2).collect(); // first 2 characters hash
-    let file_name: String = hash.chars().skip(2).collect(); // the remaining of the hash
-    let mut blob_path = std::path::Path::new(".git")
-        .join("objects")
-        .join(sub_dir_name);
-    if !blob_path.exists() {
-        create_dir(&blob_path).unwrap(); // create directory
-    }
-    blob_path = blob_path.join(file_name);
-    let encoded_file = File::create(blob_path).unwrap();
-    let mut zlib_reader = flate2::bufread::ZlibEncoder::new(
-        BufReader::new(&content[..]),
-        flate2::Compression::fast(),
-    );
+    git_operation::write_obj(hash.clone(), &obj_content).unwrap();
 
-    // write file from a buffer to another buffer
-    std::io::copy(&mut zlib_reader, &mut BufWriter::new(encoded_file)).unwrap();
+    print!("{}", hash);
 }
 
 fn ls_tree(args: &Vec<String>) {
@@ -237,47 +205,18 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
         let f_type = f.file_type().unwrap();
 
         let (hash, mode) = if f_type.is_dir() {
-            println!("directory {:?}", f.file_name());
             let hash = write_tree(f.path());
             (hash, DIRECTORY_FLAG)
         } else if f_type.is_file() {
-            println!("file {:?}", f.file_name());
-
             // read file
-            let source_f = File::open(f.path()).unwrap();
-            let mut reader = BufReader::new(source_f);
-            let mut f_content_buffer = Vec::new();
-            reader.read_to_end(&mut f_content_buffer).unwrap();
+            let file_content = fs::read(f.path()).unwrap();
+
+            // gen git_object
+            let (hash, obj_content) =
+                git_operation::gen_objects("blob".into(), &file_content).unwrap();
 
             // write git content of a file
-            let mut store_buffer = Vec::new();
-
-            // write header "blob" + " " + file_length_as_bytes + 0
-            store_buffer.extend("blob ".to_string().as_bytes());
-            store_buffer.extend(f_content_buffer.len().to_string().as_bytes());
-            store_buffer.push(0);
-
-            // write file content
-            store_buffer.append(&mut f_content_buffer);
-
-            // calculate sha1 hash
-            let mut hasher = Sha1::new();
-            hasher.update(&store_buffer);
-            let hex_hash = hex::encode(hasher.finalize());
-
-            // write to git file
-            let dir: String = hex_hash.chars().take(2).collect();
-            let git_file_name: String = hex_hash.chars().skip(2).collect();
-            let output_path = Path::new(".git").join("objects").join(dir);
-            if !output_path.exists() {
-                create_dir(output_path.clone()).unwrap();
-            }
-            let output_path = output_path.join(git_file_name);
-            let git_file = File::create(output_path).unwrap();
-            let mut zlib_reader =
-                ZlibEncoder::new(BufReader::new(&store_buffer[..]), Compression::fast());
-
-            std::io::copy(&mut zlib_reader, &mut BufWriter::new(git_file)).unwrap();
+            git_operation::write_obj(hash.clone(), &obj_content).unwrap();
 
             // file mode
             #[cfg(unix)]
@@ -285,7 +224,7 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
             #[cfg(not(unix))]
             let file_mode = 0o644;
 
-            (hex_hash, FILE_FLAG | ((file_mode & 0o777) as u16))
+            (hash, FILE_FLAG | ((file_mode & 0o777) as u16))
         } else {
             println!("skip {:?}", f.file_name());
             continue;
@@ -299,35 +238,11 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
     }
 
     // hash tree
-    let mut tree_buffer = Vec::new();
-
-    // write header "tree" + " " + file_length_as_bytes + 0
-    tree_buffer.extend("tree ".to_string().as_bytes());
-    tree_buffer.extend(tree_content.len().to_string().as_bytes());
-    tree_buffer.push(0);
-
-    // write tree content
-    tree_buffer.append(&mut tree_content);
+    let (tree_hash, tree_obj_content) =
+        git_operation::gen_objects("tree".into(), &tree_content).unwrap();
 
     // calculate sha1 hash
-    let mut hasher = Sha1::new();
-    hasher.update(&tree_buffer);
-    let hex_hash = hex::encode(hasher.finalize());
+    git_operation::write_obj(tree_hash.clone(), &tree_obj_content).unwrap();
 
-    // write to git file
-    let dir: String = hex_hash.chars().take(2).collect();
-    let git_file_name: String = hex_hash.chars().skip(2).collect();
-    let output_path = Path::new(".git").join("objects").join(dir);
-    if !output_path.exists() {
-        create_dir(output_path.clone()).unwrap();
-    }
-    let output_path = output_path.join(git_file_name);
-    let git_file = File::create(output_path).unwrap();
-    let mut zlib_reader = ZlibEncoder::new(BufReader::new(&tree_buffer[..]), Compression::fast());
-
-    std::io::copy(&mut zlib_reader, &mut BufWriter::new(git_file)).unwrap();
-
-    println!("write-tree {}", hex_hash);
-
-    return hex_hash;
+    return tree_hash;
 }
