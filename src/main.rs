@@ -233,7 +233,7 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
         };
 
         // println!("{:06o} | {:?}", mode, f.file_name());
-        tree_content.extend_from_slice(format!("{:06o} ", mode).as_bytes());
+        tree_content.extend_from_slice(format!("{:o} ", mode).as_bytes());
         tree_content.extend_from_slice(f.file_name().as_bytes());
         tree_content.push(0);
         tree_content.append(&mut hex::decode(hash).unwrap());
