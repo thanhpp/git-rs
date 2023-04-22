@@ -237,9 +237,12 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
         let f_type = f.file_type().unwrap();
 
         let (hash, mode) = if f_type.is_dir() {
+            println!("directory {:?}", f.file_name());
             let hash = write_tree(f.path());
             (hash, DIRECTORY_FLAG)
         } else if f_type.is_file() {
+            println!("file {:?}", f.file_name());
+
             // read file
             let source_f = File::open(f.path()).unwrap();
             let mut reader = BufReader::new(source_f);
@@ -284,6 +287,7 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
 
             (hex_hash, FILE_FLAG | ((file_mode & 0o777) as u16))
         } else {
+            println!("skip {:?}", f.file_name());
             continue;
         };
 
@@ -302,7 +306,7 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
     tree_buffer.extend(tree_content.len().to_string().as_bytes());
     tree_buffer.push(0);
 
-    // write file content
+    // write tree content
     tree_buffer.append(&mut tree_content);
 
     // calculate sha1 hash
@@ -322,6 +326,8 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
     let mut zlib_reader = ZlibEncoder::new(BufReader::new(&tree_buffer[..]), Compression::fast());
 
     std::io::copy(&mut zlib_reader, &mut BufWriter::new(git_file)).unwrap();
+
+    println!("write-tree {}", hex_hash);
 
     return hex_hash;
 }
