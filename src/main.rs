@@ -6,6 +6,12 @@ use std::io::Read;
 use std::os::unix::prelude::OsStrExt;
 use std::os::unix::prelude::PermissionsExt;
 use std::path::Path;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+
+use anyhow::Result;
+use clap::Parser;
+use clap::Subcommand;
 
 mod git_operation;
 
@@ -26,6 +32,16 @@ fn main() {
         "write-tree" => {
             let hash = write_tree(".");
             println!("{hash}");
+        }
+        "commit-tree" => {
+            let git_cmd = Command::parse();
+            match git_cmd.command {
+                SubCommands::CommitTree {
+                    parent_sha,
+                    message,
+                    hash,
+                } => commit_tree(hash, parent_sha, message).unwrap(),
+            }
         }
         _ => {
             println!("unknown command: {}", args[1])
@@ -247,4 +263,56 @@ fn write_tree<P: AsRef<Path>>(path: P) -> String {
     git_operation::write_obj(tree_hash.clone(), &tree_obj_content).unwrap();
 
     return tree_hash;
+}
+
+#[derive(Parser)]
+struct Command {
+    #[command(subcommand)]
+    command: SubCommands,
+}
+
+#[derive(Subcommand)]
+enum SubCommands {
+    CommitTree {
+        #[arg(short)]
+        parent_sha: String,
+
+        #[arg(short)]
+        message: String,
+
+        hash: String,
+    },
+}
+
+fn commit_tree(hash: String, parent_hash: String, message: String) -> Result<()> {
+    // commit-tree <tree_sha> -p <commit_sha> -m <message>
+
+    let mut obj_content: Vec<u8> = Vec::new();
+
+    obj_content.extend_from_slice(format!("tree {}\n", hash).as_bytes());
+    obj_content.extend_from_slice(format!("parent {}\n", parent_hash).as_bytes());
+    obj_content.extend_from_slice(
+        format!(
+            "author {} {} {} +0000\n",
+            "gitname",
+            "git@email.com",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        )
+        .as_bytes(),
+    );
+
+    obj_content.extend_from_slice(format!("\n{}", message).as_bytes());
+    if !message.ends_with("\n") {
+        obj_content.push(b'\n');
+    }
+
+    let (hash, file_content) = git_operation::gen_objects("commit".into(), &obj_content)?;
+    git_operation::write_obj(hash.clone(), &file_content)?;
+
+    print!("{hash}");
+
+    Ok(())
 }
